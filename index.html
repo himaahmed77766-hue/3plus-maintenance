@@ -140,9 +140,37 @@ async function submitCloudTransfer(fromId,toId,amount,note){
  if(error)throw Error('فشل تسجيل التحويل على السيرفر: '+cloudError(error));
  await refreshCloudAccounts();render();
 }
+async function submitCloudWithdrawal(accountId,amount,reason){
+  if(!cloudReady || !cloudShop?.id)throw Error('سجّل دخولك للمحل أولًا');
+  if(!cloudAccounts.some(a=>a.id===accountId && a.shop_id===cloudShop.id))throw Error('الحساب مش تابع للمحل الحالي');
+  if(!Number.isFinite(amount) || amount<=0 || amount>1000000000)throw Error('اكتب مبلغ سحب صحيح');
+  if(!reason?.trim())throw Error('لازم تكتب سبب السحب');
+  const {data,error}=await cloud.rpc('withdraw_shop_money',{
+    p_account_id:accountId,p_amount:amount,p_reason:reason.trim()
+  });
+  if(error)throw Error('السحب لم يتم: '+cloudError(error));
+  await refreshCloudAccounts();render();
+  return data;
+}
+function openCloudWithdrawal(){
+  if(!cloudAccounts.length)return alert('لا توجد حسابات متاحة');
+  const opts=cloudAccounts.map(a=>`<option value="${esc(a.id)}">${esc(a.account_name)}</option>`).join('');
+  modal('سحب فلوس من حساب',`<div class="fields"><div class="field"><label for="f_withdraw_account">الحساب اللي هتسحب منه</label><select id="f_withdraw_account">${opts}</select></div>${field('المبلغ بالجنيه','withdraw_amount','','number')}${field('سبب السحب','withdraw_reason','')}</div><p class="small">هيتخصم المبلغ من الحساب المحدد فقط لو السيرفر أكّد نجاح العملية، وهتظهر حركة السحب في سجل الحساب.</p>`,async()=>{
+    const accountId=$('f_withdraw_account').value;
+    const amountText=v('withdraw_amount'),reason=v('withdraw_reason');
+    if(!amountText || !Number.isFinite(Number(amountText)) || Number(amountText)<=0)throw Error('اكتب مبلغ السحب الصحيح');
+    if(!reason.trim())throw Error('اكتب سبب السحب');
+    const btn=$('save');btn.disabled=true;$('merr').textContent='جاري تسجيل السحب...';
+    try{
+      await submitCloudWithdrawal(accountId,Number(amountText),reason);
+      $('modal').close();alert('تم تسجيل السحب على السيرفر بنجاح');
+    }catch(e){$('merr').textContent=cloudError(e)}finally{btn.disabled=false}
+  });
+}
+
 function cloudAccountsView(){
  const names=new Map(cloudAccounts.map(a=>[a.id,a.account_name]));
- return head('الدرج والحسابات')+`<div class="panel"><h3>حسابات المحل</h3>${accountsError?`<p style="color:#ffaaaa">تعذر تحميل الحسابات: ${esc(accountsError)}</p>`:cloudAccounts.map(a=>`<div class="perm"><strong>${esc(a.account_name)}</strong><span class="small">${esc(a.account_code)}</span></div>`).join('')||'<p>لا توجد حسابات لهذا المحل</p>'}<p class="small">الأرصدة غير معروضة لحد ما نتحقق من صلاحيات عرضها. التحويل لا يتم إلا بعد تأكيد السيرفر.</p><div class="actions"><button class="btn" id="cloudTransfer" ${cloudAccounts.length<2?'disabled':''}>⇄ تحويل بين الحسابات</button><button class="btn alt" id="reloadAccounts">تحديث الحسابات</button></div></div><div class="panel"><h3>آخر الحركات المسجلة على السيرفر</h3>${cloudMovements.map(m=>`<div class="perm"><span>${esc(names.get(m.account_id)||'حساب')} — ${esc(m.movement_type)}<br><small>${esc(m.description||'')} · ${esc((m.created_at||'').slice(0,16).replace('T',' '))}</small></span><strong>${fmt(m.amount)}</strong></div>`).join('')||'<p class="muted">لا توجد حركات ظاهرة</p>'}</div>`;
+ return head('الدرج والحسابات')+`<div class="panel"><h3>حسابات المحل</h3>${accountsError?`<p style="color:#ffaaaa">تعذر تحميل الحسابات: ${esc(accountsError)}</p>`:cloudAccounts.map(a=>`<div class="perm"><strong>${esc(a.account_name)}</strong><span class="small">${esc(a.account_code)}</span></div>`).join('')||'<p>لا توجد حسابات لهذا المحل</p>'}<p class="small">الأرصدة غير معروضة لحد ما نتحقق من صلاحيات عرضها. التحويل لا يتم إلا بعد تأكيد السيرفر.</p><div class="actions"><button class="btn" id="cloudTransfer" ${cloudAccounts.length<2?'disabled':''}>⇄ تحويل بين الحسابات</button><button class="btn alt" id="cloudWithdraw" ${cloudAccounts.length<1?'disabled':''}>− سحب فلوس</button><button class="btn alt" id="reloadAccounts">تحديث الحسابات</button></div></div><div class="panel"><h3>آخر الحركات المسجلة على السيرفر</h3>${cloudMovements.map(m=>`<div class="perm"><span>${esc(names.get(m.account_id)||'حساب')} — ${esc(m.movement_type)}<br><small>${esc(m.description||'')} · ${esc((m.created_at||'').slice(0,16).replace('T',' '))}</small></span><strong>${fmt(m.amount)}</strong></div>`).join('')||'<p class="muted">لا توجد حركات ظاهرة</p>'}</div>`;
 }
 function openCloudTransfer(){
  if(cloudAccounts.length<2)return alert('لا يوجد حسابان متاحان');
@@ -293,6 +321,6 @@ document.querySelectorAll('[data-status]').forEach(b=>b.onclick=async()=>{
  }catch(e){alert('تعذر تغيير الحالة: '+cloudError(e));b.disabled=false}
 });
 
-if($('cloudTransfer'))$('cloudTransfer').onclick=openCloudTransfer;if($('reloadAccounts'))$('reloadAccounts').onclick=async()=>{await refreshCloudAccounts();render()};
+if($('cloudTransfer'))$('cloudTransfer').onclick=openCloudTransfer;if($('cloudWithdraw'))$('cloudWithdraw').onclick=openCloudWithdrawal;if($('reloadAccounts'))$('reloadAccounts').onclick=async()=>{await refreshCloudAccounts();render()};
 if($('newLoss'))$('newLoss').onclick=()=>{alert('تسجيل المرتجعات والخسائر سحابيًا لسه تحت التنفيذ. مش هنحفظ عملية محلية على إنها حقيقية.');return;modal('إضافة مرتجع أو خسارة',`<div class="fields"><div class="field"><label>النوع</label><select id="f_kind"><option>خسارة</option><option>مرتجع</option></select></div>${field('السبب','reason')}${field('المبلغ','amount',0,'number')}</div>`,()=>{if(!v('reason')||+v('amount')<=0)throw Error('أدخل سببًا ومبلغًا صحيحًا');state.losses.push({kind:v('kind'),reason:v('reason'),amount:+v('amount'),date:new Date().toISOString().slice(0,10)});activityLog('تسجيل '+v('kind'),v('reason')+' — '+v('amount'));persist()});};if($('newMove'))$('newMove').onclick=()=>{alert('حركات الحسابات المالية لسه مش مربوطة بالسيرفر. مش هنسمح بتسجيل حركة محلية مضللة.');return;modal('حركة مالية تجريبية',`<div class="fields"><div class="field"><label>الحساب</label><select id="f_account">${Object.keys(state.accounts).map(a=>`<option>${a}</option>`).join('')}</select></div><div class="field"><label>نوع الحركة</label><select id="f_kind"><option value="in">إيداع</option><option value="out">سحب</option></select></div>${field('المبلغ','amount',0,'number')}</div>`,()=>{const n=+v('amount'),a=v('account'),k=v('kind');if(n<=0)throw Error('المبلغ يجب أن يكون أكبر من صفر');if(k==='out'&&state.accounts[a]<n)throw Error('الرصيد غير كافٍ');state.accounts[a]+=(k==='in'?n:-n);state.movements.unshift({account:a,kind:k==='in'?'إيداع':'سحب',amount:n,date:new Date().toISOString().slice(0,10)});persist()});};if($('addShop'))$('addShop').onclick=()=>modal('إضافة محل للمعاينة',field('اسم المحل','name'),()=>{if(!v('name'))throw Error('اكتب اسم المحل');state.shops.push({id:Date.now(),name:v('name'),active:true,plan:'تجريبي'});persist()});document.querySelectorAll('[data-shop]').forEach(b=>b.onclick=()=>{const s=state.shops.find(s=>s.id==b.dataset.shop);s.active=!s.active;persist()});document.querySelectorAll('[data-perm]').forEach(b=>b.onchange=()=>{state.permissions[b.dataset.perm]=b.checked;persist()});document.querySelectorAll('[data-color]').forEach(b=>b.onclick=()=>{state.color=b.dataset.color;persist()});if($('template'))$('template').onchange=e=>{state.template=e.target.value;persist()};document.querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>{let i=+b.dataset.up;if(i>0){[state.order[i-1],state.order[i]]=[state.order[i],state.order[i-1]];persist()}});document.querySelectorAll('[data-down]').forEach(b=>b.onclick=()=>{let i=+b.dataset.down;if(i<state.order.length-1){[state.order[i+1],state.order[i]]=[state.order[i],state.order[i+1]];persist()}})};$('menu').onclick=()=>$('side').classList.toggle('open');$('mode').onclick=switchControl;$('back').onclick=back;$('cancel').onclick=()=>$('modal').close();$('save').onclick=()=>{try{const result=dlgSave?.();if(result&&typeof result.then==='function'){result.catch(e=>{$('merr').textContent=cloudError(e)});return}$('modal').close()}catch(e){$('merr').textContent=e.message}};$('logout').onclick=async()=>{if(!cloud||!confirm('تسجيل الخروج من 3PLUS؟'))return;await cloud.auth.signOut();cloudReady=false;cloudUser=null;cloudShop=null;cloudAccounts=[];cloudMovements=[];state.repairs=[];document.getElementById('cloudGate').hidden=false;document.getElementById('cloudPassword').value='';cloudMessage('تم تسجيل الخروج');};$('language').onclick=()=>alert('الترجمة الإنجليزية ضمن مرحلة التنفيذ التالية.');render();document.getElementById('cloudLogin').onsubmit=async e=>{e.preventDefault();const b=document.getElementById('cloudLoginBtn');b.disabled=true;cloudMessage('جاري تسجيل الدخول...');try{if(!cloud)throw Error('الاتصال لم يجهز');const {data,error}=await cloud.auth.signInWithPassword({email:document.getElementById('cloudEmail').value.trim(),password:document.getElementById('cloudPassword').value});if(error)throw error;await enterCloud(data.user)}catch(err){cloudMessage('تعذر تسجيل الدخول: '+cloudError(err))}finally{b.disabled=false}};startCloud();
 </script></body></html>
